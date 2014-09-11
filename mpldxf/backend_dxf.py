@@ -1,0 +1,209 @@
+"""
+A backend to export DXF using a custom DXF renderer.
+
+This allows saving of DXF figures.
+
+Use as a matplotlib external backend:
+
+  import matplotlib
+  matplotlib.use('module://mpldxf.backend_dxf')
+
+or register:
+
+  matplotlib.backend_bases.register_backend('dxf', FigureCanvasDxf)
+
+Based on matplotlib.backends.backend_template.py.
+
+Copyright (C) 2014 David M Kent
+
+Distribution of this software without written permission of the
+copyright holder is prohibited.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+"""
+
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
+import os
+import sys
+
+import matplotlib
+from matplotlib.backend_bases import (RendererBase, FigureCanvasBase,
+                                      GraphicsContextBase)
+import ezdxf
+
+# When packaged with py2exe ezdxf has issues finding its templates
+# We tell it where to find them using this.
+# Note we also need to make sure they get packaged by adding them to the
+# configuration in setup.py
+if hasattr(sys, 'frozen'):
+    ezdxf.options.template_dir = os.path.dirname(sys.executable)
+
+
+class RendererDxf(RendererBase):
+    """
+    The renderer handles drawing/rendering operations.
+
+    Renders the drawing using the ``ezdxf`` package.
+    """
+    def __init__(self, width, height, dpi, dxfversion):
+        RendererBase.__init__(self)
+        self.height = height
+        self.width = width
+        self.dpi = dpi
+        self.dxfversion = dxfversion
+        self._init_drawing()
+
+    def _init_drawing(self):
+        """Create a drawing, set some global information and add
+           the layers we need.
+        """
+        drawing = ezdxf.new(dxfversion=self.dxfversion)
+        modelspace = drawing.modelspace()
+        drawing.layers.create('FILLED', dxfattribs={'color': 2})
+        drawing.layers.create('LINES', dxfattribs={'color': 7})
+        drawing.layers.create('TEXT', dxfattribs={'color': 7})
+        drawing.header['$EXTMIN'] = (0, 0, 0)
+        drawing.header['$EXTMAX'] = (self.width, self.height, 0)
+        self.drawing = drawing
+        self.modelspace = modelspace
+
+    def clear(self):
+        """Reset the renderer."""
+        super(RendererDxf, self).clear()
+        self._init_drawing()
+
+    def draw_path(self, gc, path, transform, rgbFace=None):
+        """Draw a path.
+
+           To do this we need to decide which DXF entity is most appropriate
+           for the path. We choose from lwpolylines or hatches.
+        """
+        for vertices in path.to_polygons(transform=transform):
+            if rgbFace is not None and vertices.shape[0] > 2:
+                # we have a face color so we draw a filled polygon,
+                # in DXF this means a HATCH entity
+                hatch = self.modelspace.add_hatch(vertices,
+                                                  {'layer': 'FILLED'})
+                color_vals = tuple([255.0 * v for v in rgbFace[:3]])
+                hatch.set_ext_color(color_vals)
+            else:
+                # A non-filled polygon or a line - use LWPOLYLINE entity
+                self.modelspace.add_lwpolyline(vertices, {'layer': 'LINES'})
+
+    def draw_image(self, gc, x, y, im):
+        pass
+
+    def draw_text(self, gc, x, y, s, prop, angle, ismath=False, mtext=None):
+        fontsize = self.points_to_pixels(prop.get_size_in_points())
+        color = gc.get_rgb()
+
+        text = self.modelspace.add_text(s.encode('ascii', 'ignore'), {
+            'height': fontsize,
+            'layer': 'TEXT',
+            'rotation': angle,
+        })
+
+        halign = self._map_align(mtext.get_ha(), vert=False)
+        valign = self._map_align(mtext.get_va(), vert=True)
+        align = valign
+        if align:
+            align += '_'
+        align += halign
+
+        p1 = x, y
+        p2 = (x - 50, y)
+
+        text.set_pos(p1, p2=p2, align=align)
+        #text.set_ext_color(color)
+
+    def _map_align(self, align, vert=False):
+        """Translate a matplotlib text alignment to the ezdxf alignment."""
+        if align in ['right', 'center', 'left', 'top',
+                     'bottom', 'middle']:
+            align = align.upper()
+        elif align == 'baseline':
+            align = ''
+        else:
+            raise NotImplementedError
+        if vert and align == 'CENTER':
+            align = 'MIDDLE'
+        return align
+
+    def flipy(self):
+        return False
+
+    def get_canvas_width_height(self):
+        return self.width, self.height
+
+    def new_gc(self):
+        return GraphicsContextBase()
+
+    def points_to_pixels(self, points):
+        return points / 72.0 * self.dpi
+
+
+class FigureCanvasDxf(FigureCanvasBase):
+    """
+    A canvas to use the renderer. This only implements enough of the
+    API to allow the export of DXF to file.
+    """
+
+    #: The DXF version to use. This can be set to another version
+    #: supported by ezdxf if desired.
+    DXFVERSION = 'AC1015'
+
+    def get_dxf_renderer(self, cleared=False):
+        """Get a renderer to use. Will create a new one if we don't
+           alreadty have one or if the figure dimensions or resolution have
+           changed.
+        """
+        l, b, w, h = self.figure.bbox.bounds
+        key = w, h, self.figure.dpi
+        try:
+            self._lastKey, self.dxf_renderer
+        except AttributeError:
+            need_new_renderer = True
+        else:
+            need_new_renderer = (self._lastKey != key)
+
+        if need_new_renderer:
+            self.dxf_renderer = RendererDxf(w, h, self.figure.dpi,
+                                              self.DXFVERSION)
+            self._lastKey = key
+        elif cleared:
+            self.dxf_renderer.clear()
+        return self.dxf_renderer
+
+    def draw(self):
+        """
+        Draw the figure using the renderer
+        """
+        renderer = self.get_dxf_renderer()
+        self.figure.draw(renderer)
+        return renderer.drawing
+
+    # Add DXF to the class-scope filetypes dictionary
+    filetypes = FigureCanvasBase.filetypes.copy()
+    filetypes['dxf'] = 'DXF'
+
+    def print_dxf(self, filename, *args, **kwargs):
+        """
+        Write out a DXF file.
+        """
+        drawing = self.draw()
+        drawing.saveas(filename)
+
+    def get_default_filetype(self):
+        return 'dxf'
+
+
+########################################################################
+#
+# Now just provide the standard names that backend.__init__ is expecting
+#
+########################################################################
+
+FigureCanvas = FigureCanvasDxf
