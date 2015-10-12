@@ -1,0 +1,2 @@
+include versioneer.py
+include mpldxf/_version.py

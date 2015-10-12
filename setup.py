@@ -24,7 +24,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 import os
 from setuptools import setup
 
-VERSION = "0.1.0"
+import versioneer
+
+
 AUTHOR_NAME = 'David Kent'
 AUTHOR_EMAIL = 'davidkent@fastmail.com.au'
 
@@ -36,9 +38,11 @@ def read(fname):
     except IOError:
         return "File '%s' not found.\n" % fname
 
+
 setup(
     name='mpldxf',
-    version=VERSION,
+    version=versioneer.get_version(),
+    cmdclass=versioneer.get_cmdclass(),
     description='A matplotlib backend to write DXF drawings.',
     author=AUTHOR_NAME,
     url='https://github.com/dmkent/mpldxf',
