@@ -27,3 +27,9 @@ You can then save your figure::
   from matplotlib import pyplot as plt
   plt.plot(range(10))
   plt.savefig('myplot.dxf')
+
+Warning
+++++++++++++++++++++
+
+This is very much a work in progress. Not all matplotlib plot types will
+render correctly. Text alignment and sizing in particular need work.
