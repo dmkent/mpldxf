@@ -46,7 +46,10 @@ setup(
     ],
 
     install_requires=[
-        'ezdxf',
-        #'git://bitbucket.org/mozman/ezdxf/@master',
+        "ezdxf",
+        "matplotlib",
+    ],
+    dependency_links=[
+        'hg+https://bitbucket.org/mozman/ezdxf@default#egg=ezdxf-default',
     ],
 )

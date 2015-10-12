@@ -34,12 +34,27 @@ from matplotlib.backend_bases import (RendererBase, FigureCanvasBase,
                                       GraphicsContextBase)
 import ezdxf
 
+from . import dxf_colors
+
 # When packaged with py2exe ezdxf has issues finding its templates
 # We tell it where to find them using this.
 # Note we also need to make sure they get packaged by adding them to the
 # configuration in setup.py
 if hasattr(sys, 'frozen'):
     ezdxf.options.template_dir = os.path.dirname(sys.executable)
+
+
+def rgb_to_dxf(rgb_val):
+    """Convert an RGB[A] colour to DXF colour index.
+
+       ``rgb_val`` should be a tuple of values in range 0.0 - 1.0. Any
+       alpha value is ignored.
+    """
+    if rgb_val is not None:
+        dxfcolor = dxf_colors.nearest_index([255.0 * val for val in rgb_val[:3]])
+    else:
+        dxfcolor = dxf_colors.BLACK
+    return dxfcolor
 
 
 class RendererDxf(RendererBase):
@@ -62,9 +77,6 @@ class RendererDxf(RendererBase):
         """
         drawing = ezdxf.new(dxfversion=self.dxfversion)
         modelspace = drawing.modelspace()
-        drawing.layers.create('FILLED', dxfattribs={'color': 2})
-        drawing.layers.create('LINES', dxfattribs={'color': 7})
-        drawing.layers.create('TEXT', dxfattribs={'color': 7})
         drawing.header['$EXTMIN'] = (0, 0, 0)
         drawing.header['$EXTMAX'] = (self.width, self.height, 0)
         self.drawing = drawing
@@ -81,29 +93,34 @@ class RendererDxf(RendererBase):
            To do this we need to decide which DXF entity is most appropriate
            for the path. We choose from lwpolylines or hatches.
         """
+        dxfcolor = rgb_to_dxf(rgbFace)
+
         for vertices in path.to_polygons(transform=transform):
             if rgbFace is not None and vertices.shape[0] > 2:
                 # we have a face color so we draw a filled polygon,
                 # in DXF this means a HATCH entity
-                hatch = self.modelspace.add_hatch(vertices,
-                                                  {'layer': 'FILLED'})
-                color_vals = tuple([255.0 * v for v in rgbFace[:3]])
-                hatch.set_ext_color(color_vals)
+                hatch = self.modelspace.add_hatch(dxfcolor)
+                with hatch.edit_boundary() as editor:
+                    editor.add_polyline_path(vertices)
             else:
                 # A non-filled polygon or a line - use LWPOLYLINE entity
-                self.modelspace.add_lwpolyline(vertices, {'layer': 'LINES'})
+                attrs = {
+                    'color': dxfcolor,
+                }
+                self.modelspace.add_lwpolyline(vertices, attrs)
+
 
     def draw_image(self, gc, x, y, im):
         pass
 
     def draw_text(self, gc, x, y, s, prop, angle, ismath=False, mtext=None):
         fontsize = self.points_to_pixels(prop.get_size_in_points())
-        color = gc.get_rgb()
+        dxfcolor = rgb_to_dxf(gc.get_rgb())
 
         text = self.modelspace.add_text(s.encode('ascii', 'ignore'), {
             'height': fontsize,
-            'layer': 'TEXT',
             'rotation': angle,
+            'color': dxfcolor,
         })
 
         halign = self._map_align(mtext.get_ha(), vert=False)
@@ -117,7 +134,6 @@ class RendererDxf(RendererBase):
         p2 = (x - 50, y)
 
         text.set_pos(p1, p2=p2, align=align)
-        #text.set_ext_color(color)
 
     def _map_align(self, align, vert=False):
         """Translate a matplotlib text alignment to the ezdxf alignment."""
