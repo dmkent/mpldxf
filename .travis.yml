@@ -4,6 +4,8 @@ python:
   - "3.4"
   - "3.5"
 # command to install dependencies
-install: "pip install ."
+install: 
+  - "pip install hg+https://bitbucket.org/mozman/ezdxf@default#egg=ezdxf-0.7.0alpha"
+  - "pip install ."
 # command to run tests
 script: nosetests
