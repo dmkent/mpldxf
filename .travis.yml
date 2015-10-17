@@ -1,11 +1,14 @@
 language: python
 python:
   - "2.7"
-  - "3.4"
-  - "3.5"
+#  - "3.4"
+#  - "3.5"
 # command to install dependencies
 install: 
   - "pip install hg+https://bitbucket.org/mozman/ezdxf@default#egg=ezdxf-0.7.0alpha"
   - "pip install ."
+before_script:
+  - "export DISPLAY=:99.0"
+  - "sh -e /etc/init.d/xvfb start"
 # command to run tests
 script: nosetests
