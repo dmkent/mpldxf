@@ -112,6 +112,9 @@ class RendererDxf(RendererBase):
         else:
             rgb = gc.get_rgb()
             dxfcolor = rgb_to_dxf(rgb)
+        
+        ppath = path.to_polygons(transform=transform, closed_only=False) 
+        for vertices in ppath:
             if rgbFace is not None and vertices.shape[0] > 2:
                 # we have a face color so we draw a filled polygon,
                 # in DXF this means a HATCH entity
