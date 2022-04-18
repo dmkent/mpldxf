@@ -42,6 +42,7 @@ import sys
 import matplotlib
 from matplotlib.backend_bases import (RendererBase, FigureCanvasBase,
                                       GraphicsContextBase)
+import numpy as np
 import ezdxf
 
 from . import dxf_colors
@@ -60,10 +61,13 @@ def rgb_to_dxf(rgb_val):
        ``rgb_val`` should be a tuple of values in range 0.0 - 1.0. Any
        alpha value is ignored.
     """
-    if rgb_val is not None:
-        dxfcolor = dxf_colors.nearest_index([255.0 * val for val in rgb_val[:3]])
+    if rgb_val is None:
+        dxfcolor = dxf_colors.WHITE
+    # change black to white
+    elif np.allclose(np.array(rgb_val[:3]), np.zeros(3)):
+        dxfcolor = dxf_colors.nearest_index([255,255,255])
     else:
-        dxfcolor = dxf_colors.BLACK
+        dxfcolor = dxf_colors.nearest_index([255.0 * val for val in rgb_val[:3]])
     return dxfcolor
 
 
@@ -103,9 +107,11 @@ class RendererDxf(RendererBase):
            To do this we need to decide which DXF entity is most appropriate
            for the path. We choose from lwpolylines or hatches.
         """
-        dxfcolor = rgb_to_dxf(rgbFace)
-
-        for vertices in path.to_polygons(transform=transform):
+        if rgbFace is not None:
+            dxfcolor = rgb_to_dxf(rgbFace)
+        else:
+            rgb = gc.get_rgb()
+            dxfcolor = rgb_to_dxf(rgb)
             if rgbFace is not None and vertices.shape[0] > 2:
                 # we have a face color so we draw a filled polygon,
                 # in DXF this means a HATCH entity
