@@ -149,10 +149,12 @@ class RendererDxf(RendererBase):
             align += '_'
         align += halign
 
-        p1 = x, y
-        p2 = (x - 50, y)
+        # need to get original points for text anchoring
+        pos = mtext.get_unitless_position()
+        x, y = mtext.get_transform().transform(pos)
 
-        text.set_pos(p1, p2=p2, align=align)
+        p1 = x, y
+        text.set_pos(p1, align=align)
 
     def _map_align(self, align, vert=False):
         """Translate a matplotlib text alignment to the ezdxf alignment."""
@@ -161,7 +163,10 @@ class RendererDxf(RendererBase):
             align = align.upper()
         elif align == 'baseline':
             align = ''
+        elif align == 'center_baseline':
+            align = 'MIDDLE'
         else:
+            print(align)
             raise NotImplementedError
         if vert and align == 'CENTER':
             align = 'MIDDLE'
