@@ -172,10 +172,19 @@ class RendererDxf(RendererBase):
            To do this we need to decide which DXF entity is most appropriate
            for the path. We choose from lwpolylines or hatches.
         """
+        print(gc.__dict__)
         
         _ppath = path.transformed(transform)
         ppath = _ppath.to_polygons(closed_only=False) 
+
+        bbox = gc.get_clip_rectangle()
         for vertices in ppath:
+            if bbox is not None:
+                cliprect = [[bbox.x0, bbox.y0],
+                            [bbox.x1, bbox.y0],
+                            [bbox.x1, bbox.y1],
+                            [bbox.x0, bbox.y1]]
+                vertices = ezdxf.math.clip_polygon_2d(cliprect, vertices)
             if rgbFace is not None and vertices.shape[0] > 2:
                 # we have a face color so we draw a filled polygon,
                 # in DXF this means a HATCH entity
@@ -192,7 +201,7 @@ class RendererDxf(RendererBase):
         # now deal with a hatch if exists
         hatch = gc.get_hatch()
         if hatch is not None:
-            # find extents and center of the parent path
+            # find extents and center of the original unclipped parent path
             ext = path.get_extents(transform=transform)
             dx = ext.x1-ext.x0
             cx = 0.5*(ext.x1+ext.x0)
