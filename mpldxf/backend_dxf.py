@@ -212,7 +212,9 @@ class RendererDxf(RendererBase):
         fontsize = self.points_to_pixels(prop.get_size_in_points())
         dxfcolor = rgb_to_dxf(gc.get_rgb())
 
-        text = self.modelspace.add_text(s.encode('ascii', 'ignore').decode(), {
+        s=s.replace(u"\u2212", "-")
+        s.encode('ascii', 'ignore').decode()
+        text = self.modelspace.add_text(s, {
             'height': fontsize,
             'rotation': angle,
             'color': dxfcolor,
