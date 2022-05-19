@@ -74,56 +74,6 @@ def rgb_to_dxf(rgb_val):
         dxfcolor = dxf_colors.nearest_index([255.0 * val for val in rgb_val[:3]])
     return dxfcolor
 
-def converttodef(path):
-    return [
-        [
-            228.0127875,
-            (18.288, 25.4),
-            (-203.200000016, -228.5999999858),
-            [3.4172144, -338.3048363956],
-        ]]
-    linedef = list()
-    pt0, pt1 = None, None
-    pastcode = 0
-
-    for vert, code in path.iter_segments():
-        print(vert, code)
-        
-    for vert, code in path.iter_segments():
-        # print(vert, code, pastcode)
-        #starting vertix
-        if (code == 2) | (code == 79):# | ((code == 1) & (pastcode != 0)):
-            pt1 = vert
-            
-    #     if (~(pt0 is None) & ~(pt1 is None)):
-    #     if pt0 and pt1:
-    #         print(pt0, pt1)
-            dy = pt1[1] - pt0[1]
-            dx = pt1[0] - pt0[0]
-            angle = np.degrees(np.arctan2(dy, dx))
-            angle = 0.0
-            basept = pt0
-            offset = (dx, dy)
-            dash = [100,-100]
-            
-            linedef.append([angle, basept, offset, dash])
-
-            pt0 = pt1
-        
-            # if (code == 2):
-            #     pt0 = pt1
-            # if code == 79:
-            #     return linedef
-        elif code == 1:
-            pt0 = vert
-
-        if (code == 79) | ((code == 1) & (pastcode != 0)):
-            return linedef
-
-        pastcode = code
-
-    return linedef
-
 
 class RendererDxf(RendererBase):
     """
