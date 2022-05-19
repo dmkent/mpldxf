@@ -38,10 +38,14 @@ from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 import os
 import sys
+import math
 
 import matplotlib
 from matplotlib.backend_bases import (RendererBase, FigureCanvasBase,
                                       GraphicsContextBase)
+from matplotlib.transforms import Affine2D
+import matplotlib.transforms as transforms
+import matplotlib.collections as mplc
 import numpy as np
 import ezdxf
 
@@ -69,6 +73,56 @@ def rgb_to_dxf(rgb_val):
     else:
         dxfcolor = dxf_colors.nearest_index([255.0 * val for val in rgb_val[:3]])
     return dxfcolor
+
+def converttodef(path):
+    return [
+        [
+            228.0127875,
+            (18.288, 25.4),
+            (-203.200000016, -228.5999999858),
+            [3.4172144, -338.3048363956],
+        ]]
+    linedef = list()
+    pt0, pt1 = None, None
+    pastcode = 0
+
+    for vert, code in path.iter_segments():
+        print(vert, code)
+        
+    for vert, code in path.iter_segments():
+        # print(vert, code, pastcode)
+        #starting vertix
+        if (code == 2) | (code == 79):# | ((code == 1) & (pastcode != 0)):
+            pt1 = vert
+            
+    #     if (~(pt0 is None) & ~(pt1 is None)):
+    #     if pt0 and pt1:
+    #         print(pt0, pt1)
+            dy = pt1[1] - pt0[1]
+            dx = pt1[0] - pt0[0]
+            angle = np.degrees(np.arctan2(dy, dx))
+            angle = 0.0
+            basept = pt0
+            offset = (dx, dy)
+            dash = [100,-100]
+            
+            linedef.append([angle, basept, offset, dash])
+
+            pt0 = pt1
+        
+            # if (code == 2):
+            #     pt0 = pt1
+            # if code == 79:
+            #     return linedef
+        elif code == 1:
+            pt0 = vert
+
+        if (code == 79) | ((code == 1) & (pastcode != 0)):
+            return linedef
+
+        pastcode = code
+
+    return linedef
 
 
 class RendererDxf(RendererBase):
@@ -101,32 +155,95 @@ class RendererDxf(RendererBase):
         super(RendererDxf, self).clear()
         self._init_drawing()
 
+    def _draw_path(self, vertices, **kwargs): 
+        # A non-filled polygon or a line - use LWPOLYLINE entity
+        return self.modelspace.add_lwpolyline(points=vertices,
+                                        **kwargs)
+
+    def _draw_hatch(self, vertices, **kwargs): 
+        # A non-filled polygon or a line - use LWPOLYLINE entity
+        hatch = self.modelspace.add_hatch(**kwargs)
+        line = hatch.paths.add_polyline_path(vertices)
+        return hatch, line
+
     def draw_path(self, gc, path, transform, rgbFace=None):
         """Draw a path.
 
            To do this we need to decide which DXF entity is most appropriate
            for the path. We choose from lwpolylines or hatches.
         """
-        if rgbFace is not None:
-            dxfcolor = rgb_to_dxf(rgbFace)
-        else:
-            rgb = gc.get_rgb()
-            dxfcolor = rgb_to_dxf(rgb)
         
-        ppath = path.to_polygons(transform=transform, closed_only=False) 
+        _ppath = path.transformed(transform)
+        ppath = _ppath.to_polygons(closed_only=False) 
         for vertices in ppath:
             if rgbFace is not None and vertices.shape[0] > 2:
                 # we have a face color so we draw a filled polygon,
                 # in DXF this means a HATCH entity
-                hatch = self.modelspace.add_hatch(dxfcolor)
-                hatch.paths.add_polyline_path(vertices)
+                dxfcolor = rgb_to_dxf(rgbFace)
+                hatch, _ = self._draw_hatch(vertices=vertices,
+                        color=dxfcolor)
             else:
                 # A non-filled polygon or a line - use LWPOLYLINE entity
-                attrs = {
-                    'color': dxfcolor,
-                }
-                self.modelspace.add_lwpolyline(points=vertices,
-                                               dxfattribs=attrs)
+                attrs = {'color': rgb_to_dxf(gc.get_rgb())}
+                pline = self._draw_path(vertices=vertices,
+                                   dxfattribs=attrs)
+
+
+        # now deal with a hatch if exists
+        hatch = gc.get_hatch()
+        if hatch is not None:
+            # find extents and center of the parent path
+            ext = path.get_extents(transform=transform)
+            dx = ext.x1-ext.x0
+            cx = 0.5*(ext.x1+ext.x0)
+            dy = ext.y1-ext.y0
+            cy = 0.5*(ext.y1+ext.y0)
+
+            # matplotlib uses a 1-inch square hatch, so find out how many rows
+            # and columns will be needed to fill the parent path
+            rows, cols = math.ceil(0.5*dy/self.dpi)-1, math.ceil(0.5*dx/self.dpi)-1
+
+            # get color of the hatch
+            rgb = gc.get_hatch_color()
+            dxfcolor = rgb_to_dxf(rgb)
+
+            # get hatch paths
+            hpath = gc.get_hatch_path()
+
+            # this is a tranform that produces a properly scaled hatch in the center
+            # of the parent hatch
+            _transform = Affine2D().translate(-0.5, -0.5).scale(self.dpi).translate(cx, cy)
+            hpatht = hpath.transformed(_transform)
+
+            # now place the hatch to cover the parent path
+            for irow in range(-rows, rows+1):
+                for icol in range(-cols, cols+1):
+                    # transformation from the center of the parent path
+                    _trans = Affine2D().translate(icol*self.dpi, irow*self.dpi)
+                    # transformed hatch
+                    _hpath = hpatht.transformed(_trans)
+
+                    # turn into list of vertices to make up polygon
+                    _path = _hpath.to_polygons(closed_only=False) 
+
+                    for vertices in _path:
+                        # clip each set to the parent path
+                        # note that we expect some bad behavior clipping lines with a polygon
+                        # and it will be delt with below
+                        clipped = ezdxf.math.clip_polygon_2d(pline.vertices(), vertices)
+
+                        # if there is something to plot
+                        if len(clipped)>0:
+                            if len(vertices) == 2:
+                                # if the original path was a line sometimes the clipping algorithm
+                                # gives back repeated vertices, so we'll remove the repeats here
+                                clipped = [list(s) for s in list(dict.fromkeys([tuple(s) for s in clipped]))]
+                                attrs = {'color': dxfcolor}
+                                _line = self._draw_path(vertices=clipped,
+                                                dxfattribs=attrs)
+                            else:
+                                hatch, _line = self._draw_hatch(vertices=clipped,
+                                        color=dxfcolor)
 
 
     def draw_image(self, gc, x, y, im):
