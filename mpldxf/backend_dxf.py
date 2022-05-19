@@ -47,6 +47,7 @@ from matplotlib.transforms import Affine2D
 import matplotlib.transforms as transforms
 import matplotlib.collections as mplc
 import numpy as np
+from shapely.geometry import LineString, Polygon
 import ezdxf
 
 from . import dxf_colors
@@ -122,7 +123,6 @@ class RendererDxf(RendererBase):
            To do this we need to decide which DXF entity is most appropriate
            for the path. We choose from lwpolylines or hatches.
         """
-        print(gc.__dict__)
         
         _ppath = path.transformed(transform)
         ppath = _ppath.to_polygons(closed_only=False) 
@@ -134,7 +134,13 @@ class RendererDxf(RendererBase):
                             [bbox.x1, bbox.y0],
                             [bbox.x1, bbox.y1],
                             [bbox.x0, bbox.y1]]
-                vertices = ezdxf.math.clip_polygon_2d(cliprect, vertices)
+                if _ppath.codes is not None:
+                    vertices = ezdxf.math.clip_polygon_2d(cliprect, vertices)
+                else:
+                    cliprect = Polygon(cliprect)
+                    line = LineString(vertices)
+                    vertices = line.intersection(cliprect).coords
+
             if rgbFace is not None and vertices.shape[0] > 2:
                 # we have a face color so we draw a filled polygon,
                 # in DXF this means a HATCH entity
@@ -187,16 +193,16 @@ class RendererDxf(RendererBase):
 
                     for vertices in _path:
                         # clip each set to the parent path
-                        # note that we expect some bad behavior clipping lines with a polygon
-                        # and it will be delt with below
-                        clipped = ezdxf.math.clip_polygon_2d(pline.vertices(), vertices)
+                        if len(vertices) == 2:
+                            clippoly = Polygon(pline.vertices())
+                            line = LineString(vertices)
+                            clipped = line.intersection(clippoly).coords
+                        else:
+                            clipped = ezdxf.math.clip_polygon_2d(pline.vertices(), vertices)
 
                         # if there is something to plot
                         if len(clipped)>0:
                             if len(vertices) == 2:
-                                # if the original path was a line sometimes the clipping algorithm
-                                # gives back repeated vertices, so we'll remove the repeats here
-                                clipped = [list(s) for s in list(dict.fromkeys([tuple(s) for s in clipped]))]
                                 attrs = {'color': dxfcolor}
                                 _line = self._draw_path(vertices=clipped,
                                                 dxfattribs=attrs)
