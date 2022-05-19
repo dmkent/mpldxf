@@ -160,7 +160,7 @@ class RendererDxf(RendererBase):
 
             # matplotlib uses a 1-inch square hatch, so find out how many rows
             # and columns will be needed to fill the parent path
-            rows, cols = math.ceil(0.5*dy/self.dpi)-1, math.ceil(0.5*dx/self.dpi)-1
+            rows, cols = math.ceil(dy/self.dpi)-1, math.ceil(dx/self.dpi)-1
 
             # get color of the hatch
             rgb = gc.get_hatch_color()
