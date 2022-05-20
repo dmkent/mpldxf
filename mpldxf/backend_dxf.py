@@ -42,7 +42,7 @@ import math
 
 import matplotlib
 from matplotlib.backend_bases import (RendererBase, FigureCanvasBase,
-                                      GraphicsContextBase)
+                                      GraphicsContextBase, FigureManagerBase)
 from matplotlib.transforms import Affine2D
 import matplotlib.transforms as transforms
 import matplotlib.collections as mplc
@@ -89,6 +89,7 @@ class RendererDxf(RendererBase):
         self.dpi = dpi
         self.dxfversion = dxfversion
         self._init_drawing()
+        self._groupd = []
 
     def _init_drawing(self):
         """Create a drawing, set some global information and add
@@ -106,55 +107,74 @@ class RendererDxf(RendererBase):
         super(RendererDxf, self).clear()
         self._init_drawing()
 
-    def _draw_path(self, vertices, **kwargs): 
-        # A non-filled polygon or a line - use LWPOLYLINE entity
-        return self.modelspace.add_lwpolyline(points=vertices,
-                                        **kwargs)
+    def _get_polyline_attribs(self, gc):
+        attribs = {}
+        attribs['color'] = rgb_to_dxf(gc.get_rgb())
+        return attribs
 
-    def _draw_hatch(self, vertices, **kwargs): 
-        # A non-filled polygon or a line - use LWPOLYLINE entity
-        hatch = self.modelspace.add_hatch(**kwargs)
-        line = hatch.paths.add_polyline_path(vertices)
-        return hatch, line
-
-    def draw_path(self, gc, path, transform, rgbFace=None):
-        """Draw a path.
-
-           To do this we need to decide which DXF entity is most appropriate
-           for the path. We choose from lwpolylines or hatches.
-        """
-        
-        _ppath = path.transformed(transform)
-        ppath = _ppath.to_polygons(closed_only=False) 
-
+    def _clip_mpl(self, gc, vertices, obj):
+        # clip the polygon if clip rectangle present
         bbox = gc.get_clip_rectangle()
-        for vertices in ppath:
-            if bbox is not None:
-                cliprect = [[bbox.x0, bbox.y0],
-                            [bbox.x1, bbox.y0],
-                            [bbox.x1, bbox.y1],
-                            [bbox.x0, bbox.y1]]
-                if _ppath.codes is not None:
-                    vertices = ezdxf.math.clip_polygon_2d(cliprect, vertices)
-                else:
-                    cliprect = Polygon(cliprect)
-                    line = LineString(vertices)
-                    vertices = line.intersection(cliprect).coords
+        if bbox is not None:
+            cliprect = [[bbox.x0, bbox.y0],
+                        [bbox.x1, bbox.y0],
+                        [bbox.x1, bbox.y1],
+                        [bbox.x0, bbox.y1]]
 
-            if rgbFace is not None and vertices.shape[0] > 2:
-                # we have a face color so we draw a filled polygon,
-                # in DXF this means a HATCH entity
-                dxfcolor = rgb_to_dxf(rgbFace)
-                hatch, _ = self._draw_hatch(vertices=vertices,
-                        color=dxfcolor)
-            else:
-                # A non-filled polygon or a line - use LWPOLYLINE entity
-                attrs = {'color': rgb_to_dxf(gc.get_rgb())}
-                pline = self._draw_path(vertices=vertices,
-                                   dxfattribs=attrs)
+            if obj == 'patch':
+                vertices = ezdxf.math.clip_polygon_2d(cliprect, vertices)
+            elif obj == 'line2d':
+                cliprect = Polygon(cliprect)
+                line = LineString(vertices)
+                vertices = line.intersection(cliprect).coords
 
+        return vertices
 
-        # now deal with a hatch if exists
+    def _draw_mpl_lwpoly(self, gc, path, transform, obj):
+        #TODO rework for BEZIER curves
+        if obj=='patch':
+            close = True
+        elif obj=='line2d':
+            close = False
+
+        dxfattribs = self._get_polyline_attribs(gc)
+        vertices = path.transformed(transform).vertices
+
+        # clip the polygon if clip rectangle present
+        vertices = self._clip_mpl(gc, vertices, obj=obj)
+
+        entity = self.modelspace.add_lwpolyline(points=vertices,
+                                        close=close,
+                                        dxfattribs=dxfattribs)
+        return entity
+
+    def _draw_mpl_line2d(self, gc, path, transform):
+        line = self._draw_mpl_lwpoly(gc, path, transform, obj='line2d')
+
+    def _draw_mpl_patch(self, gc, path, transform, rgbFace=None): 
+        '''Draw a matplotlib patch object
+        '''
+
+        poly = self._draw_mpl_lwpoly(gc, path, transform, obj='patch')
+
+        # check to see if the patch is filled
+        if rgbFace is not None:
+            hatch = self.modelspace.add_hatch(color=rgb_to_dxf(rgbFace))
+            hpath = hatch.paths.add_polyline_path(
+                # get path vertices from associated LWPOLYLINE entity
+                poly.get_points(format="xyb"),
+                # get closed state also from associated LWPOLYLINE entity
+                is_closed=poly.closed)
+
+            # Set association between boundary path and LWPOLYLINE
+            hatch.associate(hpath, [poly])
+
+        self._draw_mpl_hatch(gc, path, transform, pline=poly)
+
+    def _draw_mpl_hatch(self, gc, path, transform, pline):
+        '''Draw MPL hatch
+        '''
+
         hatch = gc.get_hatch()
         if hatch is not None:
             # find extents and center of the original unclipped parent path
@@ -180,6 +200,7 @@ class RendererDxf(RendererBase):
             _transform = Affine2D().translate(-0.5, -0.5).scale(self.dpi).translate(cx, cy)
             hpatht = hpath.transformed(_transform)
 
+            # print("\tHatch Path:", hpatht)
             # now place the hatch to cover the parent path
             for irow in range(-rows, rows+1):
                 for icol in range(-cols, cols+1):
@@ -204,17 +225,53 @@ class RendererDxf(RendererBase):
                         if len(clipped)>0:
                             if len(vertices) == 2:
                                 attrs = {'color': dxfcolor}
-                                _line = self._draw_path(vertices=clipped,
+                                self.modelspace.add_lwpolyline(points=clipped,
                                                 dxfattribs=attrs)
                             else:
-                                hatch, _line = self._draw_hatch(vertices=clipped,
-                                        color=dxfcolor)
+                                # A non-filled polygon or a line - use LWPOLYLINE entity
+                                hatch = self.modelspace.add_hatch(color=dxfcolor)
+                                line = hatch.paths.add_polyline_path(clipped)
 
+    def draw_path(self, gc, path, transform, rgbFace=None):
+        # print('\nEntered ###DRAW_PATH###')
+        # print('\t', self._groupd)
+        # print('\t', gc.__dict__, rgbFace)
+        # print('\t', gc.get_sketch_params())
+        # print('\tMain Path', path.__dict__)
+        # hatch = gc.get_hatch()
+        # if hatch is not None:
+        #     print('\tHatch Path', gc.get_hatch_path().__dict__)
+
+        if self._groupd[-1] == 'patch':
+            # print('Draw Patch')
+            line = self._draw_mpl_patch(gc, path, transform, rgbFace)
+
+        elif self._groupd[-1] == 'line2d':
+            line = self._draw_mpl_line2d(gc, path, transform) 
+
+
+    # Note if this is used then tick marks and lines with markers go through this function
+    def draw_markers(self, gc, marker_path, marker_trans, path, trans, rgbFace=None):
+        # print('\nEntered ###DRAW_MARKERS###')
+        # print('\t', self._groupd)
+        # print('\t', gc.__dict__)
+        # print('\tMarker Path:', type(marker_path), marker_path.transformed(marker_trans).__dict__)
+        # print('\tPath:', type(path), path.transformed(trans).__dict__)
+        if (self._groupd[-1] == 'line2d') & ('tick' in self._groupd[-2]):
+            newpath = path.transformed(trans)
+            dx, dy = newpath.vertices[0]
+            _trans = marker_trans + Affine2D().translate(dx, dy)
+            line = self._draw_mpl_line2d(gc, marker_path, _trans) 
+        # print('\tLeft ###DRAW_MARKERS###')
 
     def draw_image(self, gc, x, y, im):
         pass
 
     def draw_text(self, gc, x, y, s, prop, angle, ismath=False, mtext=None):
+        # print('\nEntered ###DRAW_TEXT###')
+        # print('\t', self._groupd)
+        # print('\t', gc.__dict__)
+
         fontsize = self.points_to_pixels(prop.get_size_in_points())
         dxfcolor = rgb_to_dxf(gc.get_rgb())
 
@@ -239,6 +296,7 @@ class RendererDxf(RendererBase):
 
         p1 = x, y
         text.set_pos(p1, align=align)
+        # print('Left ###TEXT###')
 
     def _map_align(self, align, vert=False):
         """Translate a matplotlib text alignment to the ezdxf alignment."""
@@ -250,11 +308,18 @@ class RendererDxf(RendererBase):
         elif align == 'center_baseline':
             align = 'MIDDLE'
         else:
-            print(align)
+            # print(align)
             raise NotImplementedError
         if vert and align == 'CENTER':
             align = 'MIDDLE'
         return align
+
+    def open_group(self, s, gid=None):
+        # docstring inherited
+        self._groupd.append(s)
+
+    def close_group(self, s):
+        self._groupd.pop(-1)
 
     def flipy(self):
         return False
@@ -277,7 +342,7 @@ class FigureCanvasDxf(FigureCanvasBase):
 
     #: The DXF version to use. This can be set to another version
     #: supported by ezdxf if desired.
-    DXFVERSION = 'AC1015'
+    DXFVERSION = 'AC1032'
 
     def get_dxf_renderer(self, cleared=False):
         """Get a renderer to use. Will create a new one if we don't
@@ -323,6 +388,7 @@ class FigureCanvasDxf(FigureCanvasBase):
     def get_default_filetype(self):
         return 'dxf'
 
+FigureManagerDXF = FigureManagerBase
 
 ########################################################################
 #
