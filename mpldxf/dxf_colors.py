@@ -22,7 +22,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 from math import sqrt
 
-from ezdxf.tools import rgb
+import ezdxf.colors as rgb
 
 
 # Most CAD programs seem to handle index 7 as either white or black
@@ -41,7 +41,7 @@ def _distance(target, test):
 def nearest_index(rgb_color):
     """Get the DXF color index for the color nearest to the RGB color."""
     distances = [_distance(rgb_color, rgb.int2rgb(dxf_color))
-                 for dxf_color in rgb.dxf_default_colors]
+                 for dxf_color in rgb.DXF_DEFAULT_COLORS]
     min_dist = min(distances)
     idx_min = distances.index(min_dist)
     if idx_min == 0:
